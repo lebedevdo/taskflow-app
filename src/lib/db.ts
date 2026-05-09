@@ -1,37 +1,37 @@
-// db.ts — SQLite (sql.js) adapter with localStorage persistence.
+// db.ts — SQLite (sql.js) adapter with file persistence via Tauri FS.
 import initSqlJs, { Database, SqlJsStatic } from 'sql.js';
 // @ts-ignore
 import wasmUrl from 'sql.js/dist/sql-wasm.wasm?url';
+import { readBinaryFile, writeBinaryFile, BaseDirectory, createDir } from '@tauri-apps/plugin-fs';
 
-const STORAGE_KEY = 'taskflow.sqlite.v1';
-const STORAGE_KEY_TS = 'taskflow.sqlite.v1.ts';
+const DB_FILE = 'taskflow.sqlite';
 
 let SQL: SqlJsStatic | null = null;
 let db: Database | null = null;
-let storageAvailable = true;
 
-function tryStorage<T>(fn: () => T, fallback: T): T {
-  try { return fn(); } catch { storageAvailable = false; return fallback; }
+// ВАЖНО: здесь мы пока жёстко используем стандартную папку AppData.
+// Когда будем делать "кастомный путь", логика выбора пути будет вставляться именно сюда.
+
+async function ensureAppDataDir() {
+  // Создаёт папку приложения в каталоге AppData (если её ещё нет).
+  // BaseDirectory.AppData — стандартная директория данных приложения в Tauri.[web:33][web:48]
+  await createDir('', { baseDir: BaseDirectory.AppData, recursive: true });
 }
 
-function loadFromStorage(): Uint8Array | null {
-  return tryStorage(() => {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    if (!raw) return null;
-    try {
-      const arr = JSON.parse(raw) as number[];
-      return new Uint8Array(arr);
-    } catch { return null; }
-  }, null);
-}
-
-function saveToStorage(bytes: Uint8Array) {
-  tryStorage(() => {
-    const arr = Array.from(bytes);
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(arr));
-    localStorage.setItem(STORAGE_KEY_TS, String(Date.now()));
+async function loadFromFile(): Promise<Uint8Array | null> {
+  try {
+    await ensureAppDataDir();
+    const bytes = await readBinaryFile(DB_FILE, { baseDir: BaseDirectory.AppData });
+    return bytes;
+  } catch {
+    // файла ещё нет — первый запуск, это нормально
     return null;
-  }, null);
+  }
+}
+
+async function saveToFile(bytes: Uint8Array): Promise<void> {
+  await ensureAppDataDir();
+  await writeBinaryFile(DB_FILE, bytes, { baseDir: BaseDirectory.AppData });
 }
 
 export async function initDb(): Promise<Database> {
@@ -39,12 +39,22 @@ export async function initDb(): Promise<Database> {
   if (!SQL) {
     SQL = await initSqlJs({ locateFile: () => wasmUrl as string });
   }
-  const stored = loadFromStorage();
-  db = stored ? new SQL.Database(stored) : new SQL.Database();
-  ensureSchema(db);
-  if (!stored) seed(db);
-  migrate(db);
-  save();
+
+  const fileBytes = await loadFromFile();
+  if (fileBytes) {
+    // Есть существующий файл БД — загружаем его
+    db = new SQL.Database(fileBytes);
+    ensureSchema(db);
+    migrate(db);
+  } else {
+    // Файл ещё не существует — создаём новую БД и сохраняем её в файл
+    db = new SQL.Database();
+    ensureSchema(db);
+    seed(db);
+    migrate(db);
+    save();
+  }
+
   return db;
 }
 
@@ -226,8 +236,9 @@ function scheduleSave() {
 
 export function save() {
   if (!db) return;
-  const data = db.export();
-  saveToStorage(data);
+  const data = db.export(); // Uint8Array
+  // fire-and-forget: не ждём завершения записи, чтобы не блокировать UI
+  void saveToFile(data);
 }
 
 export function exportJson() {
