@@ -3,6 +3,7 @@
 
 use std::sync::Mutex;
 use serde::{Deserialize, Serialize};
+use tauri::Manager;
 
 #[derive(Debug, Serialize, Deserialize)]
 struct DbConfig {
