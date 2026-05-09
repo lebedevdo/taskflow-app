@@ -5,7 +5,6 @@ import { StatusGroup } from '../components/StatusGroup';
 import { TaskModal } from '../components/TaskModal';
 import {
   Search, Filter, ChevronsDownUp, ChevronsUpDown,
-  CheckSquare, Loader2, PauseCircle, CheckCircle2,
 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import {
@@ -36,7 +35,7 @@ export function TasksPage() {
 
   const [query, setQuery] = useState('');
   const [tagFilter, setTagFilter] = useState<number | null>(null);
-  const [statusFilter, setStatusFilter] = useState<string | null>(null);
+  const statusFilter = useStore(s => s.taskStatusFilter);
   const [openTask, setOpenTask] = useState<Task | null>(null);
   const searchRef = useRef<HTMLInputElement | null>(null);
   const navigate = useNavigate();
@@ -57,23 +56,15 @@ export function TasksPage() {
     return () => window.removeEventListener('keydown', fn);
   }, [navigate]);
 
-  // Metric chip counts (from store like Dashboard does)
+  // Status-id sets used by the chip filter logic.
   const archiveStatusIds = useMemo(
     () => new Set(allStatuses.filter(s => s.behavior === 'archive' && s.is_technical !== 1).map(s => s.id)),
     [allStatuses]
   );
   const pausedStatusIds = useMemo(
-    () => new Set(allStatuses.filter(s => s.behavior === 'bottom').map(s => s.id)),
+    () => new Set(allStatuses.filter(s => s.behavior === 'bottom' || s.behavior === 'paused').map(s => s.id)),
     [allStatuses]
   );
-
-  const chipMetrics = useMemo(() => {
-    const total = tasks.length;
-    const inProgress = tasks.filter(t => !archiveStatusIds.has(t.status_id) && !pausedStatusIds.has(t.status_id)).length;
-    const paused = tasks.filter(t => pausedStatusIds.has(t.status_id)).length;
-    const done = allTasks.filter(t => archiveStatusIds.has(t.status_id)).length;
-    return { total, inProgress, paused, done };
-  }, [tasks, allTasks, archiveStatusIds, pausedStatusIds]);
 
   const filterActive = !!query || tagFilter != null || statusFilter != null;
 
@@ -189,11 +180,6 @@ export function TasksPage() {
 
   const draggedTask = activeId ? findTaskById(activeId) : null;
 
-  // Chip filter toggle helper
-  const toggleChipFilter = (key: string) => {
-    setStatusFilter(prev => prev === key ? null : key);
-  };
-
   return (
     <div className="flex-1 flex flex-col overflow-hidden relative z-10">
       {/* Toolbar */}
@@ -228,14 +214,6 @@ export function TasksPage() {
         </div>
 
         <div className="flex-1" />
-
-        {/* Metric chips */}
-        <MetricChips
-          lang={lang}
-          metrics={chipMetrics}
-          activeFilter={statusFilter}
-          onToggle={toggleChipFilter}
-        />
 
         <button
           onClick={toggleAll}
@@ -284,79 +262,6 @@ export function TasksPage() {
       </div>
 
       <TaskModal task={openTask} onClose={() => setOpenTask(null)} />
-    </div>
-  );
-}
-
-// ─── Metric chips component ───────────────────────────────────────────────────
-interface MetricChipsProps {
-  lang: 'ru' | 'en';
-  metrics: { total: number; inProgress: number; paused: number; done: number };
-  activeFilter: string | null;
-  onToggle: (key: string) => void;
-}
-
-function MetricChips({ lang, metrics, activeFilter, onToggle }: MetricChipsProps) {
-  const chips = [
-    {
-      key: 'total',
-      icon: CheckSquare,
-      value: metrics.total,
-      label: tr(lang, 'chip_total'),
-      color: 'var(--accent)',
-    },
-    {
-      key: 'inprogress',
-      icon: Loader2,
-      value: metrics.inProgress,
-      label: tr(lang, 'chip_inprogress'),
-      color: '#D98F2B',
-    },
-    {
-      key: 'paused',
-      icon: PauseCircle,
-      value: metrics.paused,
-      label: tr(lang, 'chip_paused'),
-      color: 'var(--muted)',
-    },
-    {
-      key: 'done',
-      icon: CheckCircle2,
-      value: metrics.done,
-      label: tr(lang, 'chip_done'),
-      color: '#437A22',
-    },
-  ] as const;
-
-  return (
-    <div className="flex items-center gap-1.5">
-      {chips.map(({ key, icon: Icon, value, label, color }) => {
-        const isActive = activeFilter === key;
-        return (
-          <button
-            key={key}
-            onClick={() => onToggle(key)}
-            title={label}
-            className={
-              'flex items-center gap-1 px-2 py-1 rounded-full border text-[11px] transition-colors ' +
-              (isActive
-                ? 'border-accent bg-accent-soft'
-                : 'border-border-soft hover:bg-surface-alt')
-            }
-          >
-            <Icon size={11} style={{ color }} />
-            <span className="tabular font-medium" style={{ color: isActive ? 'var(--accent)' : 'var(--text)' }}>
-              {value}
-            </span>
-            {/* Label hidden below 1100px via CSS class */}
-            <span className="chip-label hidden-narrow text-muted">{label}</span>
-          </button>
-        );
-      })}
-      <style>{`
-        @media (min-width: 1100px) { .hidden-narrow { display: inline; } }
-        @media (max-width: 1099px) { .hidden-narrow { display: none; } }
-      `}</style>
     </div>
   );
 }
