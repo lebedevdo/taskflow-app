@@ -1,36 +1,37 @@
-// db.ts — SQLite (sql.js) adapter with file persistence via Tauri FS.
+// db.ts — SQLite (sql.js) adapter with localStorage persistence.
 import initSqlJs, { Database, SqlJsStatic } from 'sql.js';
 // @ts-ignore
 import wasmUrl from 'sql.js/dist/sql-wasm.wasm?url';
-import { readFile, writeFile, mkdir, remove, BaseDirectory } from '@tauri-apps/plugin-fs';
 
-const DB_FILE = 'TaskFlow/taskflow.sqlite';
+const STORAGE_KEY = 'taskflow.sqlite.v1';
+const STORAGE_KEY_TS = 'taskflow.sqlite.v1.ts';
 
 let SQL: SqlJsStatic | null = null;
 let db: Database | null = null;
+let storageAvailable = true;
 
-// ВАЖНО: здесь мы пока жёстко используем стандартную папку AppData.
-// Когда будем делать "кастомный путь", логика выбора пути будет вставляться именно сюда.
-
-async function ensureAppDataDir() {
-  // создаём папку TaskFlow в каталоге AppData, если её ещё нет
-  await mkdir('TaskFlow', { baseDir: BaseDirectory.AppData, recursive: true });
+function tryStorage<T>(fn: () => T, fallback: T): T {
+  try { return fn(); } catch { storageAvailable = false; return fallback; }
 }
 
-async function loadFromFile(): Promise<Uint8Array | null> {
-  try {
-    await ensureAppDataDir();
-    const bytes = await readFile(DB_FILE, { baseDir: BaseDirectory.AppData });
-    return bytes;
-  } catch {
-    // файла ещё нет — первый запуск
+function loadFromStorage(): Uint8Array | null {
+  return tryStorage(() => {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if (!raw) return null;
+    try {
+      const arr = JSON.parse(raw) as number[];
+      return new Uint8Array(arr);
+    } catch { return null; }
+  }, null);
+}
+
+function saveToStorage(bytes: Uint8Array) {
+  tryStorage(() => {
+    const arr = Array.from(bytes);
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(arr));
+    localStorage.setItem(STORAGE_KEY_TS, String(Date.now()));
     return null;
-  }
-}
-
-async function saveToFile(bytes: Uint8Array): Promise<void> {
-  await ensureAppDataDir();
-  await writeFile(DB_FILE, bytes, { baseDir: BaseDirectory.AppData });
+  }, null);
 }
 
 export async function initDb(): Promise<Database> {
@@ -38,22 +39,12 @@ export async function initDb(): Promise<Database> {
   if (!SQL) {
     SQL = await initSqlJs({ locateFile: () => wasmUrl as string });
   }
-
-  const fileBytes = await loadFromFile();
-  if (fileBytes) {
-    // Есть существующий файл БД — загружаем его
-    db = new SQL.Database(fileBytes);
-    ensureSchema(db);
-    migrate(db);
-  } else {
-    // Файл ещё не существует — создаём новую БД и сохраняем её в файл
-    db = new SQL.Database();
-    ensureSchema(db);
-    seed(db);
-    migrate(db);
-    save();
-  }
-
+  const stored = loadFromStorage();
+  db = stored ? new SQL.Database(stored) : new SQL.Database();
+  ensureSchema(db);
+  if (!stored) seed(db);
+  migrate(db);
+  save();
   return db;
 }
 
@@ -235,9 +226,8 @@ function scheduleSave() {
 
 export function save() {
   if (!db) return;
-  const data = db.export(); // Uint8Array
-  // fire-and-forget: не ждём завершения записи, чтобы не блокировать UI
-  void saveToFile(data);
+  const data = db.export();
+  saveToStorage(data);
 }
 
 export function exportJson() {
@@ -270,11 +260,9 @@ export function exportCsv(): string {
   return lines.join('\n');
 }
 
-export async function resetDatabase() {
-  try {
-    await remove(DB_FILE, { baseDir: BaseDirectory.AppData });
-  } catch {
-    // если файла нет — ничего страшного
-  }
+export function isStorageAvailable() { return storageAvailable; }
+
+export function resetDatabase() {
+  tryStorage(() => { localStorage.removeItem(STORAGE_KEY); localStorage.removeItem(STORAGE_KEY_TS); return null; }, null);
   db = null;
 }
