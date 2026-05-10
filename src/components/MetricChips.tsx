@@ -1,5 +1,5 @@
 import { useMemo } from 'react';
-import { CheckSquare, Loader2, PauseCircle, CheckCircle2 } from 'lucide-react';
+import { CheckSquare, Loader2, PauseCircle, CheckCircle2, AlertTriangle } from 'lucide-react';
 import { useStore } from '../store/useStore';
 import { tr } from '../lib/i18n';
 
@@ -7,6 +7,7 @@ import { tr } from '../lib/i18n';
  * Compact metric chips shown in the Topbar on the Tasks screen.
  * Click toggles a status filter that lives in the global store
  * and is consumed by the Tasks page.
+ * v0.8.1: Total chip icon is blue, added Overdue virtual chip.
  */
 export function MetricChips() {
   const lang = useStore(s => s.language);
@@ -25,17 +26,22 @@ export function MetricChips() {
     const pausedStatusIds = new Set(
       statuses.filter(s => s.behavior === 'bottom' || s.behavior === 'paused').map(s => s.id),
     );
-    let total = 0, inProgress = 0, paused = 0, done = 0;
+    const today = new Date().toISOString().slice(0, 10);
+    let total = 0, inProgress = 0, paused = 0, done = 0, overdue = 0;
     for (const t of allTasks) {
       if (t.archived || techIds.has(t.status_id)) continue;
       total++;
-      if (archiveStatusIds.has(t.status_id)) done++;
-      else if (pausedStatusIds.has(t.status_id)) paused++;
-      else inProgress++;
+      if (archiveStatusIds.has(t.status_id)) {
+        done++;
+      } else if (pausedStatusIds.has(t.status_id)) {
+        paused++;
+      } else {
+        inProgress++;
+        // Overdue: due_date < today, not archived/done/deleted
+        if (t.deadline && t.deadline < today) overdue++;
+      }
     }
-    // “done” should also include archived completions even if soft-archived?
-    // Keeping current visible-only semantics for symmetry with Tasks list.
-    return { total, inProgress, paused, done };
+    return { total, inProgress, paused, done, overdue };
   }, [allTasks, statuses]);
 
   const onToggle = (key: string) => {
@@ -43,8 +49,9 @@ export function MetricChips() {
   };
 
   const chips = [
-    { key: 'total',      icon: CheckSquare,  value: metrics.total,      label: tr(lang, 'chip_total'),      color: 'var(--accent)' },
-    { key: 'inprogress', icon: Loader2,      value: metrics.inProgress, label: tr(lang, 'chip_inprogress'), color: '#D98F2B' },
+    { key: 'total',      icon: CheckSquare,   value: metrics.total,      label: tr(lang, 'chip_total'),      color: 'var(--accent)' },        // blue (accent)
+    { key: 'inprogress', icon: Loader2,       value: metrics.inProgress, label: tr(lang, 'chip_inprogress'), color: '#D98F2B' },
+    { key: 'overdue',    icon: AlertTriangle, value: metrics.overdue,    label: lang === 'ru' ? 'Просрочено' : 'Overdue',    color: 'var(--status-important)' },
     { key: 'paused',     icon: PauseCircle,  value: metrics.paused,     label: tr(lang, 'chip_paused'),     color: 'var(--muted)' },
     { key: 'done',       icon: CheckCircle2, value: metrics.done,       label: tr(lang, 'chip_done'),       color: '#437A22' },
   ] as const;
