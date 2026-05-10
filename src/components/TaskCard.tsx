@@ -174,7 +174,7 @@ export function TaskCard({
 
       <div className="flex items-stretch gap-2 pl-4 pr-2 py-2.5">
         {/* Main content */}
-        <div className="flex-1 min-w-0">
+        <div className="flex-1 min-w-0 pr-6">
           {tag && (
             <div className="mb-1">
               <TagChip tag={tag} />
@@ -188,7 +188,7 @@ export function TaskCard({
               onPointerDown={(e) => e.stopPropagation()}
               onClick={(e) => { e.stopPropagation(); setEditingTitle(true); }}
               title={lang === 'ru' ? 'Нажмите, чтобы изменить' : 'Click to edit'}
-              style={{ wordBreak: 'break-word', paddingRight: '1.5rem' }}
+              style={{ wordBreak: 'break-word' }}
             >
               {task.title}
             </div>

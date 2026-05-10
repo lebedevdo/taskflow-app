@@ -18,8 +18,12 @@ export function daysBetween(a?: string | null, b?: string | null): number | null
   const start = new Date(a);
   const end = b ? new Date(b) : new Date();
   if (isNaN(start.getTime())) return null;
-  const ms = end.getTime() - start.getTime();
-  return Math.max(0, Math.round(ms / 86400000));
+  // Считаем календарные дни: и день начала, и день окончания включаются.
+  // Сравниваем по локальному дню, чтобы UTC-сдвиг не давал лишний день.
+  const sd = new Date(start.getFullYear(), start.getMonth(), start.getDate()).getTime();
+  const ed = new Date(end.getFullYear(), end.getMonth(), end.getDate()).getTime();
+  const diff = Math.round((ed - sd) / 86400000);
+  return Math.max(1, diff + 1);
 }
 
 export function readableTextColor(hex: string): string {
