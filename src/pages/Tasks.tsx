@@ -30,9 +30,18 @@ export function TasksPage() {
   const reorderTasks = useStore(s => s.reorderTasks);
 
   const techIds = useMemo(() => new Set(allStatuses.filter(s => s.is_technical === 1).map(s => s.id)), [allStatuses]);
-  const tasks = useMemo(() => allTasks.filter(t => !t.archived && !techIds.has(t.status_id)), [allTasks, techIds]);
-  // Statuses on board: non-technical, non-archived (behavior !== 'archive')
-  const statuses = useMemo(() => allStatuses.filter(s => s.is_technical !== 1 && s.behavior !== 'archive'), [allStatuses]);
+
+  // Task 8: filter by hidden flag (not technical, not hidden)
+  const statuses = useMemo(() =>
+    allStatuses.filter(s => s.is_technical !== 1 && !s.hidden),
+    [allStatuses]
+  );
+
+  // Task 6: tasks visible on the board — NOT archived, NOT technical status, NOT hidden status
+  const tasks = useMemo(() => {
+    const hiddenIds = new Set(allStatuses.filter(s => s.hidden || s.is_technical === 1).map(s => s.id));
+    return allTasks.filter(t => !t.archived && !hiddenIds.has(t.status_id));
+  }, [allTasks, allStatuses, techIds]);
 
   const [query, setQuery] = useState('');
   const [tagFilter, setTagFilter] = useState<number | null>(null);
@@ -41,8 +50,22 @@ export function TasksPage() {
   const searchRef = useRef<HTMLInputElement | null>(null);
   const navigate = useNavigate();
 
-  // Manually-set collapse state (set by collapse-all or chevron clicks).
-  const [manualCollapsed, setManualCollapsed] = useState<Record<number, boolean>>(() => readCollapseState());
+  // Task 8: initialize collapse state from defaultCollapsed (first render only)
+  const defaultCollapseInit = useMemo(() => {
+    const saved = readCollapseState();
+    const result: Record<number, boolean> = {};
+    for (const s of statuses) {
+      if (s.id in saved) {
+        result[s.id] = saved[s.id];
+      } else {
+        // Apply defaultCollapsed on first render
+        result[s.id] = !!s.default_collapsed;
+      }
+    }
+    return result;
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const [manualCollapsed, setManualCollapsed] = useState<Record<number, boolean>>(defaultCollapseInit);
   useEffect(() => { writeCollapseState(manualCollapsed); }, [manualCollapsed]);
 
   // Keyboard shortcuts
@@ -57,7 +80,6 @@ export function TasksPage() {
     return () => window.removeEventListener('keydown', fn);
   }, [navigate]);
 
-  // Status-id sets used by the chip filter logic.
   const archiveStatusIds = useMemo(
     () => new Set(allStatuses.filter(s => s.behavior === 'archive' && s.is_technical !== 1).map(s => s.id)),
     [allStatuses]
@@ -75,7 +97,6 @@ export function TasksPage() {
       if (query && !(t.title.toLowerCase().includes(query.toLowerCase()) ||
         (t.comment || '').toLowerCase().includes(query.toLowerCase()))) return false;
       if (tagFilter && t.tag_id !== tagFilter) return false;
-      // Status filter from chips
       if (statusFilter === 'inprogress' && (archiveStatusIds.has(t.status_id) || pausedStatusIds.has(t.status_id))) return false;
       if (statusFilter === 'overdue') {
         if (!t.deadline || t.deadline >= today || archiveStatusIds.has(t.status_id) || pausedStatusIds.has(t.status_id)) return false;

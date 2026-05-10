@@ -13,6 +13,10 @@ export interface Status {
   sort_order: number;
   is_seed: number;
   is_technical: number;
+  /** v0.8.2: hidden=true means status is not shown on the task board (but visible in Stats/Dashboard) */
+  hidden: number;
+  /** v0.8.2: defaultCollapsed=true means the status section is collapsed by default on the board */
+  default_collapsed: number;
 }
 export interface Tag {
   id: number;
@@ -52,7 +56,7 @@ interface State {
 
   // Derived helpers
   getDeletedStatusId(): number | undefined;
-  visibleStatuses(): Status[];                 // for Tasks screen (no technical)
+  visibleStatuses(): Status[];                 // for Tasks screen (no technical, no hidden)
   visibleTasks(): Task[];                      // for Tasks screen (no archived)
   allTasks(): Task[];                          // for Stats / Dashboard
 
@@ -108,7 +112,8 @@ export const useStore = create<State>((set, get) => ({
     return get().statuses.find(s => s.is_technical === 1 && s.name === 'Удалено')?.id;
   },
   visibleStatuses() {
-    return get().statuses.filter(s => s.is_technical !== 1);
+    // v0.8.2: filter out technical AND hidden statuses
+    return get().statuses.filter(s => s.is_technical !== 1 && !s.hidden);
   },
   visibleTasks() {
     const techIds = new Set(get().statuses.filter(s => s.is_technical === 1).map(s => s.id));
@@ -152,13 +157,11 @@ export const useStore = create<State>((set, get) => ({
 
   setLanguage(l) {
     db.run('INSERT OR REPLACE INTO settings (key, value) VALUES (?,?)', ['language', l]);
-    // Re-pick quote in new language with same theme
     const q = pickQuote(quoteSetFor(get().theme), l);
     set({ language: l, quote: q });
   },
   setTheme(t) {
     db.run('INSERT OR REPLACE INTO settings (key, value) VALUES (?,?)', ['theme', t]);
-    // Re-pick quote in new theme set
     const q = pickQuote(quoteSetFor(t), get().language);
     set({ theme: t, quote: q });
   },
@@ -180,9 +183,7 @@ export const useStore = create<State>((set, get) => ({
     const today = now.slice(0, 10);
     const order = (db.get<{ m: number }>('SELECT COALESCE(MAX(sort_order),0)+1 AS m FROM tasks WHERE status_id=?',
       [p.status_id])?.m) ?? 0;
-    // Auto-fill start_date if empty
     const startDate = p.start_date || today;
-    // If status is archive (Выполнено) on creation, fill finish_date
     const status = get().statuses.find(s => s.id === p.status_id);
     let finishDate = p.finish_date ?? null;
     if (status?.behavior === 'archive' && !finishDate) finishDate = today;
@@ -200,7 +201,6 @@ export const useStore = create<State>((set, get) => ({
     const today = now.slice(0, 10);
     const fields: string[] = [];
     const vals: any[] = [];
-    // If status is being changed, apply finish_date logic
     let patch: Partial<Task> = { ...p };
     if (p.status_id !== undefined) {
       const newStatus = get().statuses.find(s => s.id === p.status_id);
@@ -210,8 +210,11 @@ export const useStore = create<State>((set, get) => ({
       if (willArchive && !wasArchive && !cur?.finish_date) {
         patch.finish_date = today;
       } else if (!willArchive && wasArchive) {
-        // un-completing: clear finish date (unless explicitly provided in patch)
         if (p.finish_date === undefined) patch.finish_date = null;
+      }
+      // Task 6 fix: when restoring a task (changing status), always clear archived flag
+      if (newStatus && newStatus.is_technical !== 1) {
+        patch.archived = 0;
       }
     }
     Object.entries(patch).forEach(([k, v]) => {
@@ -236,10 +239,8 @@ export const useStore = create<State>((set, get) => ({
     const deletedId = get().getDeletedStatusId();
     const isArchiveBehavior = curStatus?.behavior === 'archive' && curStatus?.is_technical !== 1;
     if (isArchiveBehavior) {
-      // Stays in current status, archived flag flipped
       db.run(`UPDATE tasks SET archived=1, updated_at=? WHERE id=?`, [now, id]);
     } else {
-      // Move to "Удалено" technical status
       const targetId = deletedId ?? cur.status_id;
       db.run(`UPDATE tasks SET status_id=?, archived=1, updated_at=? WHERE id=?`, [targetId, now, id]);
     }
@@ -272,7 +273,7 @@ export const useStore = create<State>((set, get) => ({
 
   addStatus(name, color, behavior) {
     const order = (db.get<{ m: number }>('SELECT COALESCE(MAX(sort_order),0)+1 AS m FROM statuses')?.m) ?? 0;
-    const r = db.run('INSERT INTO statuses (name, color, behavior, sort_order, is_seed, is_technical) VALUES (?,?,?,?,0,0)',
+    const r = db.run('INSERT INTO statuses (name, color, behavior, sort_order, is_seed, is_technical, hidden, default_collapsed) VALUES (?,?,?,?,0,0,0,0)',
       [name, color, behavior, order]);
     get().refresh();
     return r.lastInsertRowid;
@@ -287,7 +288,7 @@ export const useStore = create<State>((set, get) => ({
   },
   deleteStatus(id) {
     const status = get().statuses.find(s => s.id === id);
-    if (status?.is_technical === 1) return; // can't delete technical
+    if (status?.is_technical === 1) return;
     const first = db.get<{ id: number }>('SELECT id FROM statuses WHERE id != ? AND is_technical=0 ORDER BY sort_order LIMIT 1', [id]);
     if (first) db.run('UPDATE tasks SET status_id=? WHERE status_id=?', [first.id, id]);
     db.run('DELETE FROM statuses WHERE id=?', [id]);
