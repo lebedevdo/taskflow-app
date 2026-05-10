@@ -31,7 +31,8 @@ export function TasksPage() {
 
   const techIds = useMemo(() => new Set(allStatuses.filter(s => s.is_technical === 1).map(s => s.id)), [allStatuses]);
   const tasks = useMemo(() => allTasks.filter(t => !t.archived && !techIds.has(t.status_id)), [allTasks, techIds]);
-  const statuses = useMemo(() => allStatuses.filter(s => s.is_technical !== 1), [allStatuses]);
+  // Statuses on board: non-technical, non-archived (behavior !== 'archive')
+  const statuses = useMemo(() => allStatuses.filter(s => s.is_technical !== 1 && s.behavior !== 'archive'), [allStatuses]);
 
   const [query, setQuery] = useState('');
   const [tagFilter, setTagFilter] = useState<number | null>(null);
@@ -69,12 +70,16 @@ export function TasksPage() {
   const filterActive = !!query || tagFilter != null || statusFilter != null;
 
   const grouped = useMemo(() => {
+    const today = new Date().toISOString().slice(0, 10);
     const filtered = tasks.filter(t => {
       if (query && !(t.title.toLowerCase().includes(query.toLowerCase()) ||
         (t.comment || '').toLowerCase().includes(query.toLowerCase()))) return false;
       if (tagFilter && t.tag_id !== tagFilter) return false;
       // Status filter from chips
       if (statusFilter === 'inprogress' && (archiveStatusIds.has(t.status_id) || pausedStatusIds.has(t.status_id))) return false;
+      if (statusFilter === 'overdue') {
+        if (!t.deadline || t.deadline >= today || archiveStatusIds.has(t.status_id) || pausedStatusIds.has(t.status_id)) return false;
+      }
       if (statusFilter === 'paused' && !pausedStatusIds.has(t.status_id)) return false;
       if (statusFilter === 'done' && !archiveStatusIds.has(t.status_id)) return false;
       return true;
@@ -182,9 +187,10 @@ export function TasksPage() {
 
   return (
     <div className="flex-1 flex flex-col overflow-hidden relative z-10">
-      {/* Toolbar */}
-      <div className="px-6 pt-4 pb-2 flex items-center gap-2 shrink-0 flex-wrap">
-        <div className="relative flex-1 max-w-md min-w-[240px]">
+      {/* Toolbar — search + tag filters (scrollable) + fixed action buttons */}
+      <div className="px-6 pt-4 pb-2 shrink-0 flex flex-col gap-2">
+        {/* Row 1: search */}
+        <div className="relative max-w-md">
           <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-muted pointer-events-none" />
           <input
             ref={searchRef}
@@ -195,39 +201,45 @@ export function TasksPage() {
             className="w-full bg-surface border border-border-soft rounded-md pl-8 pr-3 py-1.5 text-[13px] outline-none focus:border-accent"
           />
         </div>
-
-        <div className="flex items-center gap-1.5">
-          <Filter size={13} className="text-muted" />
-          <button
-            onClick={() => setTagFilter(null)}
-            className={'px-2.5 py-1 rounded-full text-[11px] border ' +
-              (!tagFilter ? 'bg-accent-soft text-accent border-accent' : 'border-border-soft hover:bg-surface-alt')}
-          >{tr(lang, 'all')}</button>
-          {tags.map(t => (
+        {/* Row 2: tag filters (horizontal scroll) + fixed action buttons */}
+        <div className="flex items-center gap-3">
+          <div
+            className="flex-1 min-w-0 overflow-x-auto"
+            style={{ scrollbarWidth: 'thin' }}
+          >
+            <div className="flex items-center gap-1.5 flex-nowrap pr-1" style={{ WebkitOverflowScrolling: 'touch' }}>
+              <Filter size={13} className="text-muted shrink-0" />
+              <button
+                onClick={() => setTagFilter(null)}
+                className={'px-2.5 py-1 rounded-full text-[11px] border shrink-0 ' +
+                  (!tagFilter ? 'bg-accent-soft text-accent border-accent' : 'border-border-soft hover:bg-surface-alt')}
+              >{tr(lang, 'all')}</button>
+              {tags.map(t => (
+                <button
+                  key={t.id}
+                  onClick={() => setTagFilter(tagFilter === t.id ? null : t.id)}
+                  className={'px-2.5 py-1 rounded-full text-[11px] border mono uppercase shrink-0 ' +
+                    (tagFilter === t.id ? 'bg-accent-soft text-accent border-accent' : 'border-border-soft hover:bg-surface-alt')}
+                >{t.name}</button>
+              ))}
+            </div>
+          </div>
+          {/* Fixed right: collapse-all + new-task */}
+          <div className="flex items-center gap-2 shrink-0">
             <button
-              key={t.id}
-              onClick={() => setTagFilter(tagFilter === t.id ? null : t.id)}
-              className={'px-2.5 py-1 rounded-full text-[11px] border mono uppercase ' +
-                (tagFilter === t.id ? 'bg-accent-soft text-accent border-accent' : 'border-border-soft hover:bg-surface-alt')}
-            >{t.name}</button>
-          ))}
+              onClick={toggleAll}
+              title={allCollapsed ? tr(lang, 'expand_all') : tr(lang, 'collapse_all')}
+              className="flex items-center gap-1.5 px-2.5 py-1.5 text-[12px] border border-border-soft rounded-md hover:bg-surface-alt"
+            >
+              {allCollapsed ? <ChevronsUpDown size={13} /> : <ChevronsDownUp size={13} />}
+              <span>{allCollapsed ? tr(lang, 'expand_all') : tr(lang, 'collapse_all')}</span>
+            </button>
+            <button
+              onClick={() => navigate('/add')}
+              className="px-3 py-1.5 text-[13px] bg-accent hover:bg-accent-hover text-white rounded-md font-medium"
+            >{tr(lang, 'new_task')}</button>
+          </div>
         </div>
-
-        <div className="flex-1" />
-
-        <button
-          onClick={toggleAll}
-          title={allCollapsed ? tr(lang, 'expand_all') : tr(lang, 'collapse_all')}
-          className="flex items-center gap-1.5 px-2.5 py-1.5 text-[12px] border border-border-soft rounded-md hover:bg-surface-alt"
-        >
-          {allCollapsed ? <ChevronsUpDown size={13} /> : <ChevronsDownUp size={13} />}
-          <span>{allCollapsed ? tr(lang, 'expand_all') : tr(lang, 'collapse_all')}</span>
-        </button>
-
-        <button
-          onClick={() => navigate('/add')}
-          className="px-3 py-1.5 text-[13px] bg-accent hover:bg-accent-hover text-white rounded-md font-medium"
-        >{tr(lang, 'new_task')}</button>
       </div>
 
       {/* Scrollable task list */}
