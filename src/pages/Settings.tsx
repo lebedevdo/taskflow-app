@@ -1,9 +1,10 @@
 import { useState, useRef } from 'react';
 import { useStore, ThemeName } from '../store/useStore';
 import { tr } from '../lib/i18n';
-import { Trash2, GripVertical, Plus, Check, Sun, Moon, Sparkles, Leaf, Download, Upload, HardDrive } from 'lucide-react';
+import { Trash2, GripVertical, Plus, Check, Sun, Moon, Sparkles, Leaf, Download, Upload, HardDrive, AlertTriangle } from 'lucide-react';
 import { downloadFile } from '../lib/utils';
 import { exportJson, exportCsv, resetDatabase, isTauri } from '../lib/db';
+import { ConfirmDialog } from '../components/ConfirmDialog';
 import Papa from 'papaparse';
 import * as XLSX from 'xlsx';
 
@@ -13,7 +14,7 @@ export function SettingsPage() {
   const lang = useStore(s => s.language);
   const [sub, setSub] = useState<Sub>('general');
 
-  const subs: { key: Sub; label: string; tauriOnly?: boolean }[] = [
+  const subs: { key: Sub; label: string }[] = [
     { key: 'general', label: tr(lang, 'settings_general') },
     { key: 'tags', label: tr(lang, 'settings_tags') },
     { key: 'statuses', label: tr(lang, 'settings_statuses') },
@@ -103,14 +104,20 @@ function TagsSection() {
   const updateTag = useStore(s => s.updateTag);
   const deleteTag = useStore(s => s.deleteTag);
 
+  const [confirmId, setConfirmId] = useState<number | null>(null);
+
   return (
     <div className="max-w-2xl">
       <div className="flex items-center justify-between mb-3">
         <h3 className="font-display text-[16px] font-semibold">{tr(lang, 'settings_tags')}</h3>
+        {/* Single + icon + text, no duplicate */}
         <button
           onClick={() => addTag('NEW' + (tags.length + 1), '#5B7FB8')}
-          className="flex items-center gap-1 px-2.5 py-1 text-[12px] border border-border-soft rounded-md hover:bg-surface-alt"
-        ><Plus size={13} /> {tr(lang, 'add_tag')}</button>
+          className="flex items-center gap-1.5 px-2.5 py-1 text-[12px] border border-border-soft rounded-md hover:bg-surface-alt"
+        >
+          <Plus className="w-4 h-4" />
+          {lang === 'ru' ? 'Добавить тэг' : 'Add tag'}
+        </button>
       </div>
       <div className="border border-border-soft rounded-lg max-h-[60vh] overflow-y-auto bg-surface">
         {tags.map(t => (
@@ -126,13 +133,24 @@ function TagsSection() {
               className="flex-1 bg-transparent border-0 outline-none text-[13px] font-mono uppercase"
             />
             <button
-              onClick={() => { if (confirm(tr(lang, 'confirm_delete'))) deleteTag(t.id); }}
+              onClick={() => setConfirmId(t.id)}
               className="p-1 text-muted hover:text-[var(--status-important)]"
             ><Trash2 size={14} /></button>
           </div>
         ))}
         {tags.length === 0 && <div className="px-3 py-8 text-center text-muted text-[13px]">—</div>}
       </div>
+
+      <ConfirmDialog
+        open={confirmId !== null}
+        title={lang === 'ru' ? 'Удалить тэг?' : 'Delete tag?'}
+        message={lang === 'ru' ? 'Тэг будет удалён из всех задач.' : 'The tag will be removed from all tasks.'}
+        confirmLabel={tr(lang, 'delete')}
+        cancelLabel={tr(lang, 'cancel')}
+        danger
+        onConfirm={() => { if (confirmId !== null) deleteTag(confirmId); setConfirmId(null); }}
+        onCancel={() => setConfirmId(null)}
+      />
     </div>
   );
 }
@@ -145,11 +163,17 @@ function StatusesSection() {
   const deleteStatus = useStore(s => s.deleteStatus);
   const reorderStatuses = useStore(s => s.reorderStatuses);
 
+  const [confirmId, setConfirmId] = useState<number | null>(null);
+
+  const nonTech = statuses.filter(s => s.is_technical !== 1);
+
   const move = (i: number, dir: -1 | 1) => {
     const ids = statuses.map(s => s.id);
-    const j = i + dir;
+    // Find actual index in full statuses array
+    const fullIdx = statuses.findIndex(s => s.id === nonTech[i]?.id);
+    const j = fullIdx + dir;
     if (j < 0 || j >= ids.length) return;
-    [ids[i], ids[j]] = [ids[j], ids[i]];
+    [ids[fullIdx], ids[j]] = [ids[j], ids[fullIdx]];
     reorderStatuses(ids);
   };
 
@@ -157,13 +181,17 @@ function StatusesSection() {
     <div className="max-w-2xl">
       <div className="flex items-center justify-between mb-3">
         <h3 className="font-display text-[16px] font-semibold">{tr(lang, 'settings_statuses')}</h3>
+        {/* Single + icon + text */}
         <button
           onClick={() => addStatus('Новый', '#5B7FB8', 'middle')}
-          className="flex items-center gap-1 px-2.5 py-1 text-[12px] border border-border-soft rounded-md hover:bg-surface-alt"
-        ><Plus size={13} /> {tr(lang, 'add_status')}</button>
+          className="flex items-center gap-1.5 px-2.5 py-1 text-[12px] border border-border-soft rounded-md hover:bg-surface-alt"
+        >
+          <Plus className="w-4 h-4" />
+          {lang === 'ru' ? 'Добавить статус' : 'Add status'}
+        </button>
       </div>
       <div className="border border-border-soft rounded-lg max-h-[60vh] overflow-y-auto bg-surface">
-        {statuses.filter(s => s.is_technical !== 1).map((s, i) => (
+        {nonTech.map((s, i) => (
           <div key={s.id} className="flex items-center gap-3 px-3 py-2 border-b border-border-soft last:border-b-0">
             <div className="flex flex-col">
               <button onClick={() => move(i, -1)} className="text-muted hover:text-text leading-none text-[10px]">▲</button>
@@ -180,23 +208,39 @@ function StatusesSection() {
               onChange={(e) => updateStatus(s.id, { name: e.target.value })}
               className="flex-1 bg-transparent border-0 outline-none text-[13px]"
             />
-            <select
-              value={s.behavior}
-              onChange={(e) => updateStatus(s.id, { behavior: e.target.value })}
-              className="bg-surface-alt border border-border-soft rounded px-2 py-1 text-[12px]"
-            >
-              <option value="top">{tr(lang, 'behavior_top')}</option>
-              <option value="middle">{tr(lang, 'behavior_middle')}</option>
-              <option value="bottom">{tr(lang, 'behavior_bottom')}</option>
-              <option value="archive">{tr(lang, 'behavior_archive')}</option>
-            </select>
+            {/* Archived checkbox instead of behavior dropdown */}
+            <label className="flex items-center gap-1.5 text-[12px] text-muted cursor-pointer select-none shrink-0">
+              <input
+                type="checkbox"
+                checked={s.behavior === 'archive'}
+                onChange={(e) => updateStatus(s.id, { behavior: e.target.checked ? 'archive' : 'middle' })}
+                className="w-3.5 h-3.5 accent-[var(--accent)] cursor-pointer"
+              />
+              {lang === 'ru' ? 'Архивный' : 'Archived'}
+            </label>
             <button
-              onClick={() => { if (confirm(tr(lang, 'confirm_delete'))) deleteStatus(s.id); }}
+              onClick={() => setConfirmId(s.id)}
               className="p-1 text-muted hover:text-[var(--status-important)]"
             ><Trash2 size={14} /></button>
           </div>
         ))}
       </div>
+      <p className="text-[11px] text-muted mt-2">
+        {lang === 'ru'
+          ? 'Архивные статусы скрыты на доске задач. Порядок задаётся стрелками.'
+          : 'Archived statuses are hidden from the task board. Order is set by the arrows.'}
+      </p>
+
+      <ConfirmDialog
+        open={confirmId !== null}
+        title={lang === 'ru' ? 'Удалить статус?' : 'Delete status?'}
+        message={lang === 'ru' ? 'Задачи с этим статусом потеряют его.' : 'Tasks with this status will lose it.'}
+        confirmLabel={tr(lang, 'delete')}
+        cancelLabel={tr(lang, 'cancel')}
+        danger
+        onConfirm={() => { if (confirmId !== null) deleteStatus(confirmId); setConfirmId(null); }}
+        onCancel={() => setConfirmId(null)}
+      />
     </div>
   );
 }
@@ -223,7 +267,9 @@ function StatsToggleSection() {
         </button>
         <span className="text-[13.5px]">{tr(lang, 'enable_stats')}</span>
       </label>
-      <p className="text-[12px] text-muted">Когда выключено — вкладка «Статистика» скрыта.</p>
+      <p className="text-[12px] text-muted">
+        {lang === 'ru' ? 'Когда выключено — вкладка «Статистика» скрыта.' : 'When disabled, the Statistics tab is hidden.'}
+      </p>
     </div>
   );
 }
@@ -312,6 +358,7 @@ function IOSection() {
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const [preview, setPreview] = useState<{ rows: ImportedTask[]; filename: string } | null>(null);
   const [importing, setImporting] = useState(false);
+  const [confirmReplace, setConfirmReplace] = useState(false);
 
   const handleExportCsv = () => {
     downloadFile('taskflow.csv', exportCsv(), 'text/csv');
@@ -321,11 +368,17 @@ function IOSection() {
     downloadFile('taskflow.json', JSON.stringify(exportJson(), null, 2), 'application/json');
     pushToast(tr(lang, 'exported'));
   };
-  const handleReset = () => {
-    if (confirm('Стереть базу и пересоздать?')) {
-      resetDatabase();
-      window.location.reload();
-    }
+
+  /** Download XLSX import template */
+  const handleDownloadTemplate = () => {
+    const ws = XLSX.utils.aoa_to_sheet([
+      ['title', 'description', 'status', 'tags', 'due_date', 'created_at'],
+      ['Пример задачи', 'Описание задачи', 'В работе', 'dev', new Date().toISOString().slice(0, 10), new Date().toISOString().slice(0, 10)],
+    ]);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'Tasks');
+    XLSX.writeFile(wb, 'taskflow_import_template.xlsx');
+    pushToast(lang === 'ru' ? 'Шаблон скачан' : 'Template downloaded');
   };
 
   const parseFile = async (file: File): Promise<ImportedTask[]> => {
@@ -333,7 +386,6 @@ function IOSection() {
     if (ext === 'json') {
       const text = await file.text();
       const data = JSON.parse(text);
-      // Support both full export format {tasks:[...]} and raw array
       const rows = Array.isArray(data) ? data : (data.tasks ?? []);
       return normalizeImported(rows);
     }
@@ -364,9 +416,8 @@ function IOSection() {
       const rows = await parseFile(file);
       setPreview({ rows, filename: file.name });
     } catch (err) {
-      alert('Ошибка парсинга файла: ' + String(err));
+      pushToast('Ошибка парсинга файла: ' + String(err));
     }
-    // Reset input so same file can be chosen again
     e.target.value = '';
   };
 
@@ -393,8 +444,6 @@ function IOSection() {
   const doImport = async (replace: boolean) => {
     if (!preview) return;
     if (replace) {
-      if (!confirm(tr(lang, 'import_confirm_replace'))) return;
-      // Soft-delete all current tasks
       const softDelete = useStore.getState().softDeleteTask;
       for (const t of tasks) softDelete(t.id);
     }
@@ -415,7 +464,9 @@ function IOSection() {
 
       {/* Export */}
       <div>
-        <div className="text-[12px] text-muted uppercase tracking-wider mb-2">Экспорт</div>
+        <div className="text-[12px] text-muted uppercase tracking-wider mb-2">
+          {lang === 'ru' ? 'Экспорт' : 'Export'}
+        </div>
         <div className="grid grid-cols-2 gap-3">
           <button onClick={handleExportCsv} className="flex items-center gap-2 px-4 py-3 border border-border-soft rounded-lg hover:bg-surface-alt text-[13px]">
             <Download size={16} /> {tr(lang, 'export_csv')}
@@ -437,13 +488,24 @@ function IOSection() {
             className="hidden"
             onChange={handleFileChange}
           />
-          <button
-            onClick={() => fileInputRef.current?.click()}
-            className="flex items-center gap-2 px-4 py-2.5 border border-dashed border-border rounded-lg hover:bg-surface-alt text-[13px] w-full justify-center"
-          >
-            <Upload size={15} />
-            {tr(lang, 'import_json_csv_xlsx')}
-          </button>
+          <div className="flex gap-2">
+            <button
+              onClick={() => fileInputRef.current?.click()}
+              className="flex-1 flex items-center gap-2 px-4 py-2.5 border border-dashed border-border rounded-lg hover:bg-surface-alt text-[13px] justify-center"
+            >
+              <Upload size={15} />
+              {tr(lang, 'import_json_csv_xlsx')}
+            </button>
+            {/* XLSX template download */}
+            <button
+              onClick={handleDownloadTemplate}
+              title={lang === 'ru' ? 'Скачать шаблон XLSX' : 'Download XLSX template'}
+              className="flex items-center gap-1.5 px-3 py-2 border border-border-soft rounded-lg hover:bg-surface-alt text-[12px] shrink-0"
+            >
+              <Download size={14} />
+              {lang === 'ru' ? 'Шаблон' : 'Template'}
+            </button>
+          </div>
 
           {preview && (
             <div className="space-y-3">
@@ -465,7 +527,7 @@ function IOSection() {
                   {tr(lang, 'import_add')}
                 </button>
                 <button
-                  onClick={() => doImport(true)}
+                  onClick={() => setConfirmReplace(true)}
                   disabled={importing}
                   className="flex-1 px-3 py-2 text-[12px] border border-[var(--status-important)] text-[var(--status-important)] rounded-md hover:bg-[var(--status-important)] hover:text-white font-medium disabled:opacity-50"
                 >
@@ -480,10 +542,17 @@ function IOSection() {
         </div>
       </div>
 
-      <button
-        onClick={handleReset}
-        className="px-3 py-1.5 text-[12px] border border-border-soft rounded-md hover:bg-[var(--status-important)] hover:text-white text-muted"
-      >Сбросить базу</button>
+      {/* Confirm replace dialog */}
+      <ConfirmDialog
+        open={confirmReplace}
+        title={lang === 'ru' ? 'Заменить все задачи?' : 'Replace all tasks?'}
+        message={tr(lang, 'import_confirm_replace')}
+        confirmLabel={tr(lang, 'import_replace')}
+        cancelLabel={tr(lang, 'cancel')}
+        danger
+        onConfirm={() => { setConfirmReplace(false); doImport(true); }}
+        onCancel={() => setConfirmReplace(false)}
+      />
     </div>
   );
 }
@@ -495,6 +564,9 @@ function StorageSection() {
   const [loading, setLoading] = useState(false);
   const pushToast = useStore(s => s.pushToast);
   const isDesktop = isTauri();
+
+  // Double-confirm state for danger zone
+  const [dangerStep, setDangerStep] = useState<0 | 1 | 2>(0);
 
   const loadPath = async () => {
     if (!isDesktop) return;
@@ -515,19 +587,19 @@ function StorageSection() {
   const handleChoose = async () => {
     if (!isDesktop) return;
     try {
-      const { save } = await import('@tauri-apps/plugin-dialog');
-      const selected = await save({
-        filters: [{ name: 'SQLite Database', extensions: ['db', 'sqlite'] }],
-        defaultPath: dbPath ?? undefined,
-      });
+      const { open } = await import('@tauri-apps/plugin-dialog');
+      const selected = await open({ directory: true, multiple: false });
       if (selected) {
         const { invoke } = await import('@tauri-apps/api/core');
-        await invoke('set_db_path', { path: selected });
-        setDbPath(selected);
+        // selected is a directory; combine with filename
+        const newPath = String(selected).replace(/\/$/, '') + '/taskflow.db';
+        await invoke('set_db_path', { path: newPath });
+        setDbPath(newPath);
         pushToast(tr(lang, 'saved'));
       }
     } catch (e) {
       console.warn('Dialog error:', e);
+      pushToast(lang === 'ru' ? 'Ошибка выбора пути' : 'Path selection error');
     }
   };
 
@@ -537,6 +609,11 @@ function StorageSection() {
     await invoke('set_db_path', { path: '' });
     await loadPath();
     pushToast(tr(lang, 'saved'));
+  };
+
+  const handleDangerReset = () => {
+    resetDatabase();
+    window.location.reload();
   };
 
   return (
@@ -571,6 +648,53 @@ function StorageSection() {
           </div>
         </div>
       )}
+
+      {/* ─── Danger Zone ─────────────────────────────── */}
+      <div className="mt-8 border border-red-500/40 rounded-xl p-4 space-y-3">
+        <div className="flex items-center gap-2 text-[13px] font-semibold text-[var(--status-important)]">
+          <AlertTriangle size={15} />
+          {lang === 'ru' ? '⚠ Опасная зона' : '⚠ Danger Zone'}
+        </div>
+        <p className="text-[12px] text-muted">
+          {lang === 'ru'
+            ? 'Полное удаление всех задач, тэгов и статусов. Действие необратимо.'
+            : 'Permanently deletes all tasks, tags, and statuses. This cannot be undone.'}
+        </p>
+        <button
+          onClick={() => setDangerStep(1)}
+          className="px-4 py-2 text-[13px] border border-[var(--status-important)] text-[var(--status-important)] rounded-lg hover:bg-[var(--status-important)] hover:text-white font-medium transition-colors"
+        >
+          {lang === 'ru' ? 'Стереть все данные' : 'Erase all data'}
+        </button>
+      </div>
+
+      {/* First confirm */}
+      <ConfirmDialog
+        open={dangerStep === 1}
+        title={lang === 'ru' ? 'Стереть все данные?' : 'Erase all data?'}
+        message={lang === 'ru'
+          ? 'Вы собираетесь полностью стереть все задачи, тэги и статусы. Это действие необратимо. Продолжить?'
+          : 'You are about to permanently erase all tasks, tags, and statuses. This cannot be undone. Continue?'}
+        confirmLabel={lang === 'ru' ? 'Продолжить' : 'Continue'}
+        cancelLabel={tr(lang, 'cancel')}
+        danger
+        onConfirm={() => setDangerStep(2)}
+        onCancel={() => setDangerStep(0)}
+      />
+
+      {/* Second confirm */}
+      <ConfirmDialog
+        open={dangerStep === 2}
+        title={lang === 'ru' ? 'Точно уверены?' : 'Are you absolutely sure?'}
+        message={lang === 'ru'
+          ? 'Точно уверены? Все данные будут потеряны без возможности восстановления.'
+          : 'Are you sure? All data will be lost with no way to recover it.'}
+        confirmLabel={lang === 'ru' ? 'Да, стереть всё' : 'Yes, erase everything'}
+        cancelLabel={tr(lang, 'cancel')}
+        danger
+        onConfirm={() => { setDangerStep(0); handleDangerReset(); }}
+        onCancel={() => setDangerStep(0)}
+      />
     </div>
   );
 }
