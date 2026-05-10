@@ -1,12 +1,13 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useStore } from '../store/useStore';
 import { tr } from '../lib/i18n';
-import { ChevronDown, ChevronUp, Search, Download, Eye, EyeOff, Trash2 } from 'lucide-react';
+import { ChevronDown, ChevronUp, Search, Download, Eye, EyeOff, Trash2, RotateCcw } from 'lucide-react';
+import { ConfirmDialog } from '../components/ConfirmDialog';
 import * as db from '../lib/db';
 import { exportCsv, exportJson } from '../lib/db';
 import { downloadFile, daysBetween, formatDate } from '../lib/utils';
 import { StatusDot } from '../components/StatusPill';
-import { Modal } from '../components/Modal';
+// Modal component no longer used in Stats — replaced by ConfirmDialog
 
 type SortKey = 'title' | 'tag' | 'start' | 'deadline' | 'finish' | 'days' | 'hold' | 'comment' | 'status';
 
@@ -41,6 +42,8 @@ export function StatsPage() {
   const permanentlyDeleteTask = useStore(s => s.permanentlyDeleteTask);
 
   const [confirmDeleteId, setConfirmDeleteId] = useState<number | null>(null);
+  const [restoreId, setRestoreId] = useState<number | null>(null);
+  const [restoreStatusId, setRestoreStatusId] = useState<number | null>(null);
 
   const [query, setQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState<number | null>(null);
@@ -193,7 +196,7 @@ export function StatsPage() {
     return base;
   }, [localWidths, commentHidden]);
 
-  const totalWidth = visibleColumns.reduce((a, c) => a + (effectiveWidths[c.key] ?? c.defaultWidth), 0) + 36;
+  const totalWidth = visibleColumns.reduce((a, c) => a + (effectiveWidths[c.key] ?? c.defaultWidth), 0) + 60;
 
   return (
     <div className="flex-1 flex flex-col overflow-hidden">
@@ -253,7 +256,7 @@ export function StatsPage() {
               {visibleColumns.map(c => (
                 <col key={c.key} style={{ width: effectiveWidths[c.key] ?? c.defaultWidth }} />
               ))}
-              <col style={{ width: 36 }} />
+              <col style={{ width: 60 }} />
             </colgroup>
             <thead className="sticky top-0 bg-bg z-10">
               <tr className="text-[11px] uppercase tracking-wider text-muted">
@@ -301,16 +304,30 @@ export function StatsPage() {
                       <span className="text-[12px]" style={r.isTechnical ? { textDecoration: 'line-through' } : undefined}>{r.status?.name || '—'}</span>
                     </div>
                   </td>
-                  <td className="py-2 pr-2 w-[36px] text-center align-middle">
-                    <button
-                      type="button"
-                      onClick={() => setConfirmDeleteId(r.id)}
-                      title={tr(lang, 'perm_delete')}
-                      aria-label={tr(lang, 'perm_delete')}
-                      className="opacity-0 group-hover:opacity-100 transition-opacity p-1 rounded hover:bg-surface-alt text-muted hover:text-red-500"
-                    >
-                      <Trash2 size={14} />
-                    </button>
+                  <td className="py-2 pr-2 w-[60px] text-center align-middle">
+                    <div className="flex items-center justify-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                      {/* Restore icon — shown for done/deleted tasks */}
+                      {(r.isTechnical || r.status?.behavior === 'archive') && (
+                        <button
+                          type="button"
+                          onClick={() => { setRestoreId(r.id); setRestoreStatusId(null); }}
+                          title={lang === 'ru' ? 'Восстановить задачу' : 'Restore task'}
+                          aria-label={lang === 'ru' ? 'Восстановить' : 'Restore'}
+                          className="p-1 rounded hover:bg-surface-alt text-muted hover:text-accent"
+                        >
+                          <RotateCcw size={13} />
+                        </button>
+                      )}
+                      <button
+                        type="button"
+                        onClick={() => setConfirmDeleteId(r.id)}
+                        title={tr(lang, 'perm_delete')}
+                        aria-label={tr(lang, 'perm_delete')}
+                        className="p-1 rounded hover:bg-surface-alt text-muted hover:text-red-500"
+                      >
+                        <Trash2 size={14} />
+                      </button>
+                    </div>
                   </td>
                 </tr>
               ))}
@@ -322,39 +339,65 @@ export function StatsPage() {
         </div>
       </div>
 
-      <Modal
+      {/* Permanent delete dialog */}
+      <ConfirmDialog
         open={confirmDeleteId !== null}
-        onClose={() => setConfirmDeleteId(null)}
-        width={420}
-        label={tr(lang, 'confirm_perm_delete')}
+        title={tr(lang, 'confirm_perm_delete')}
+        message={tr(lang, 'confirm_perm_delete_q')}
+        confirmLabel={tr(lang, 'perm_delete')}
+        cancelLabel={tr(lang, 'cancel')}
+        danger
+        onConfirm={() => {
+          if (confirmDeleteId !== null) {
+            permanentlyDeleteTask(confirmDeleteId);
+            pushToast(tr(lang, 'record_deleted'));
+          }
+          setConfirmDeleteId(null);
+        }}
+        onCancel={() => setConfirmDeleteId(null)}
+      />
+
+      {/* Restore task dialog */}
+      <ConfirmDialog
+        open={restoreId !== null}
+        title={lang === 'ru' ? 'Восстановить задачу' : 'Restore task'}
+        message={lang === 'ru' ? 'Выберите статус для восстановления:' : 'Choose the status to restore to:'}
+        confirmLabel={lang === 'ru' ? 'Восстановить' : 'Restore'}
+        cancelLabel={tr(lang, 'cancel')}
+        onConfirm={() => {
+          const targetId = restoreStatusId ?? statuses.find(s => s.is_technical !== 1 && s.behavior !== 'archive')?.id;
+          if (restoreId !== null && targetId) {
+            useStore.getState().updateTask(restoreId, { status_id: targetId });
+            pushToast(lang === 'ru' ? 'Задача восстановлена' : 'Task restored');
+          }
+          setRestoreId(null);
+          setRestoreStatusId(null);
+        }}
+        onCancel={() => { setRestoreId(null); setRestoreStatusId(null); }}
       >
-        <div className="p-5">
-          <h3 className="font-display text-[15px] font-semibold mb-2">{tr(lang, 'confirm_perm_delete')}</h3>
-          <p className="text-[13px] text-muted mb-5">{tr(lang, 'confirm_perm_delete_q')}</p>
-          <div className="flex justify-end gap-2">
-            <button
-              type="button"
-              onClick={() => setConfirmDeleteId(null)}
-              className="px-3 py-1.5 text-[13px] rounded-md border border-border-soft hover:bg-surface-alt"
-            >
-              {tr(lang, 'cancel')}
-            </button>
-            <button
-              type="button"
-              onClick={() => {
-                if (confirmDeleteId !== null) {
-                  permanentlyDeleteTask(confirmDeleteId);
-                  pushToast(tr(lang, 'record_deleted'));
-                }
-                setConfirmDeleteId(null);
-              }}
-              className="px-3 py-1.5 text-[13px] rounded-md bg-red-600 hover:bg-red-700 text-white font-medium"
-            >
-              {tr(lang, 'delete')}
-            </button>
-          </div>
+        {/* Radio group: non-archived, non-technical statuses */}
+        <div className="flex flex-col gap-1.5 mt-1">
+          {statuses
+            .filter(s => s.is_technical !== 1 && s.behavior !== 'archive')
+            .map(s => (
+              <label key={s.id} className="flex items-center gap-2.5 cursor-pointer text-[13px]">
+                <input
+                  type="radio"
+                  name="restore-status"
+                  value={s.id}
+                  checked={restoreStatusId === s.id}
+                  onChange={() => setRestoreStatusId(s.id)}
+                  className="accent-[var(--accent)]"
+                />
+                <span
+                  className="w-2.5 h-2.5 rounded-full shrink-0"
+                  style={{ background: s.color }}
+                />
+                {s.name}
+              </label>
+            ))}
         </div>
-      </Modal>
+      </ConfirmDialog>
     </div>
   );
 }
