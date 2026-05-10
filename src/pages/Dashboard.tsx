@@ -1,6 +1,7 @@
 import { useMemo, useState, useRef, useEffect } from 'react';
 import { useStore } from '../store/useStore';
 import { tr } from '../lib/i18n';
+import { formatDate, formatMonthDay } from '../lib/format';
 import {
   ResponsiveContainer, LineChart, Line, XAxis, YAxis, Tooltip, CartesianGrid,
   PieChart, Pie, Cell, BarChart, Bar,
@@ -15,7 +16,6 @@ export function DashboardPage() {
   const allTasks = useStore(s => s.tasks);
   const allStatuses = useStore(s => s.statuses);
   const tags = useStore(s => s.tags);
-  // Default changed from 'month' to 'week' (fix #5)
   const [period, setPeriod] = useState<Period>('week');
   const [customRange, setCustomRange] = useState<CustomRange>({
     from: (() => { const d = new Date(); d.setDate(d.getDate() - 6); return d.toISOString().slice(0, 10); })(),
@@ -25,12 +25,18 @@ export function DashboardPage() {
   const [draftFrom, setDraftFrom] = useState(customRange.from);
   const [draftTo, setDraftTo] = useState(customRange.to);
   const popoverRef = useRef<HTMLDivElement | null>(null);
+  const triggerRef = useRef<HTMLDivElement | null>(null);
 
   // Close custom popover on outside click
   useEffect(() => {
     if (!customOpen) return;
     const fn = (e: MouseEvent) => {
-      if (popoverRef.current && !popoverRef.current.contains(e.target as Node)) setCustomOpen(false);
+      if (
+        popoverRef.current && !popoverRef.current.contains(e.target as Node) &&
+        triggerRef.current && !triggerRef.current.contains(e.target as Node)
+      ) {
+        setCustomOpen(false);
+      }
     };
     setTimeout(() => document.addEventListener('mousedown', fn), 0);
     return () => document.removeEventListener('mousedown', fn);
@@ -48,13 +54,11 @@ export function DashboardPage() {
     [allTasks, deletedStatusIds],
   );
 
-  // Date range for custom period
   const dateRange = useMemo<{ from: string; to: string } | null>(() => {
     if (period !== 'custom') return null;
     return customRange;
   }, [period, customRange]);
 
-  // Filter tasks to date range for activity chart (by created_at)
   const activityDates = useMemo(() => {
     if (period === 'custom' && dateRange) {
       const result: { date: string; count: number }[] = [];
@@ -63,7 +67,7 @@ export function DashboardPage() {
       for (let d = new Date(from); d <= to; d.setDate(d.getDate() + 1)) {
         const iso = d.toISOString().slice(0, 10);
         const count = dashTasks.filter(t => t.created_at?.slice(0, 10) === iso).length;
-        result.push({ date: iso.slice(5), count });
+        result.push({ date: formatMonthDay(iso.slice(5), lang), count });
       }
       return result;
     }
@@ -74,10 +78,10 @@ export function DashboardPage() {
       d.setDate(d.getDate() - i);
       const iso = d.toISOString().slice(0, 10);
       const count = dashTasks.filter(t => t.created_at?.slice(0, 10) === iso).length;
-      days.push({ date: iso.slice(5), count });
+      days.push({ date: formatMonthDay(iso.slice(5), lang), count });
     }
     return days;
-  }, [dashTasks, periodDays, period, dateRange]);
+  }, [dashTasks, periodDays, period, dateRange, lang]);
 
   const kpis = useMemo(() => {
     const total = dashTasks.length;
@@ -181,43 +185,46 @@ export function DashboardPage() {
             ))}
           </div>
 
-          {/* Custom period popover */}
-          {period === 'custom' && customOpen && (
-            <div
-              ref={popoverRef}
-              className="absolute right-6 mt-2 z-30 bg-surface border border-border rounded-xl shadow-xl p-4 flex flex-col gap-3 min-w-[220px]"
-              style={{ top: '100%' }}
-            >
-              <div className="text-[12px] font-medium">{tr(lang, 'dash_custom')}</div>
-              <div className="flex flex-col gap-2">
-                <label className="text-[11px] text-muted">{tr(lang, 'dash_from')}</label>
-                <input
-                  type="date"
-                  value={draftFrom}
-                  onChange={(e) => setDraftFrom(e.target.value)}
-                  className="bg-surface-alt border border-border-soft rounded px-2 py-1 text-[12px] outline-none focus:border-accent"
-                />
-                <label className="text-[11px] text-muted">{tr(lang, 'dash_to')}</label>
-                <input
-                  type="date"
-                  value={draftTo}
-                  onChange={(e) => setDraftTo(e.target.value)}
-                  className="bg-surface-alt border border-border-soft rounded px-2 py-1 text-[12px] outline-none focus:border-accent"
-                />
+          {/* Custom period popover — positioned relative to the trigger wrapper */}
+          <div ref={triggerRef} className="relative">
+            {/* Custom popover: absolute, top-100%, right-0, z-50, mt-2 */}
+            {period === 'custom' && customOpen && (
+              <div
+                ref={popoverRef}
+                className="absolute right-0 z-50 bg-surface border border-border rounded-xl shadow-xl p-4 flex flex-col gap-3 min-w-[220px]"
+                style={{ top: 'calc(100% + 8px)' }}
+              >
+                <div className="text-[12px] font-medium">{tr(lang, 'dash_custom')}</div>
+                <div className="flex flex-col gap-2">
+                  <label className="text-[11px] text-muted">{tr(lang, 'dash_from')}</label>
+                  <input
+                    type="date"
+                    value={draftFrom}
+                    onChange={(e) => setDraftFrom(e.target.value)}
+                    className="bg-surface-alt border border-border-soft rounded px-2 py-1 text-[12px] outline-none focus:border-accent"
+                  />
+                  <label className="text-[11px] text-muted">{tr(lang, 'dash_to')}</label>
+                  <input
+                    type="date"
+                    value={draftTo}
+                    onChange={(e) => setDraftTo(e.target.value)}
+                    className="bg-surface-alt border border-border-soft rounded px-2 py-1 text-[12px] outline-none focus:border-accent"
+                  />
+                </div>
+                <button
+                  onClick={applyCustom}
+                  className="px-3 py-1.5 text-[12px] bg-accent text-white rounded-md hover:bg-accent-hover font-medium"
+                >{tr(lang, 'dash_apply')}</button>
               </div>
-              <button
-                onClick={applyCustom}
-                className="px-3 py-1.5 text-[12px] bg-accent text-white rounded-md hover:bg-accent-hover font-medium"
-              >{tr(lang, 'dash_apply')}</button>
-            </div>
-          )}
+            )}
+          </div>
         </div>
       </div>
 
-      {/* Custom range label */}
+      {/* Custom range label — formatted as dd.MM.yyyy */}
       {period === 'custom' && (
         <div className="text-[11px] text-muted mb-3">
-          {customRange.from} → {customRange.to}
+          {formatDate(customRange.from)} → {formatDate(customRange.to)}
         </div>
       )}
 
@@ -225,7 +232,6 @@ export function DashboardPage() {
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4">
         <KPI label={tr(lang, 'total_tasks')} value={kpis.total} />
         <KPI label={tr(lang, 'in_progress')} value={kpis.inProgress} />
-        {/* Fix #6: completed uses green (#437A22) instead of accent */}
         <KPI label={tr(lang, 'completed')} value={kpis.completed} success />
         <KPI label={tr(lang, 'overdue')} value={kpis.overdue} danger />
       </div>
@@ -326,7 +332,9 @@ export function DashboardPage() {
               <li key={t.id} className="flex items-center gap-2.5 text-[13px]">
                 <span className="w-1.5 h-1.5 rounded-full" style={{ background: 'var(--status-done)' }} />
                 <span className="flex-1 truncate">{t.title}</span>
-                <span className="text-muted text-[11px] mono">{(t.finish_date || t.updated_at)?.slice(0, 10)}</span>
+                <span className="text-muted text-[11px] mono">
+                  {formatDate(t.finish_date || t.updated_at)}
+                </span>
               </li>
             ))}
           </ul>
